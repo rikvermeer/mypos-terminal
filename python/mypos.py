@@ -105,8 +105,8 @@ class TransactionStatus(Enum):
     InvalidDataFromHost = 12,
     UserCancel = 13,
     InternalError = 14,
-    CommunicationError = 0xF,
-    SSLError = 0x10,
+    CommunicationError = 15,
+    SSLError = 16,
     TransactionNotFound = 17,
     ReversalNotFound = 18,
     InvalidAmount = 19,
@@ -121,8 +121,8 @@ class TransactionStatus(Enum):
     ActivationUnsuccessful = 28,
     NoUpdateFound = 29,
     SoftwareUpdateUnsuccessful = 30,
-    SoftwareUpdateWaitHost = 0x1F,
-    SoftwareUpdateDontWaitHost = 0x20,
+    SoftwareUpdateWaitHost = 31,
+    SoftwareUpdateDontWaitHost = 32,
     DeactivationUnsuccessful = 33,
     OptionalUpdateRequired = 34,
     WrongCode = 35,
@@ -261,33 +261,58 @@ class IPPProcessor:
         result.Add("STATUS", str(status))
         result.Add(self.Get("STAGE"))
         return result
-
+    
     def GetDataForSending(self):
         list = []
+        #append length of list at position 0
         list.append(0)
+        #append length of list at position 1
         list.append(0)
+        #iterating over fields
         for i in range(len(self.fields)):
+            #checking if field is not None
             if self.fields[i] != None:
+                #checking if field name is one of these
                 if self.fields[i].name in ["PRIMARY_CHAIN", "SECONDARY_CHAIN", "FINGERPRINT", "CHAIN", "PRINT_DATA"]:
+                    #appending field name
                     list += list(self.fields[i].name.encode('ascii'))
+                    #appending '='
                     list.append(61)
+                    #appending field binary data
                     list += self.fields[i].bin_data
+                    #appending new line
                     list += [13, 10]
+                #checking if field name is DATA
                 elif self.fields[i].name == "DATA":
+                    #appending field name
                     list += list(self.fields[i].name.encode('ascii'))
+                    #appending '='
                     list.append(61)
+                    #appending size of binary data
                     list.append(self.fields[i].bin_data_size // 256)
                     list.append(self.fields[i].bin_data_size % 256)
+                    #appending field binary data
                     list += self.fields[i].bin_data
+                    #appending new line
                     list += [13, 10]
                 else:
+                    #appending field name
                     list += list(self.fields[i].name.encode('ascii'))
+                    #appending '='
                     list.append(61)
+                    #appending field string data
                     list += list(self.fields[i].str_data.encode('ascii'))
+                    #appending new line
                     list += [13, 10]
+        #update length of list at position 0
         list[0] = len(list) // 256
+        #update length of list at position 1
         list[1] = len(list) % 256
+        #returning the list in bytes format
         return bytes(list)
+
+
+
 
     @classmethod
     def CreateRequest(cls, method: str) -> IPPProcessor:
@@ -304,71 +329,71 @@ class IPPProcessor:
     def TryParse(cls, data: bytes) -> Tuple[bool, IPPProcessor]:
         output = None
         iPPProcessor = IPPProcessor()
-        num = 0
-        num2 = 0
-        num3 = 0
-        while num < len(data):
+        pos = 0
+        start = 0
+        length = 0
+        while pos < len(data):
             field = Field()
-            num2 = num
-            num += 1
-            while num < len(data) and data[num] != 61:
-                num += 1
-            if num >= len(data):
-                return False, output
-            field.name = data[num2:num].decode()
-            num += 1
+            start = pos
+            pos += 1
+            while pos < len(data) and data[pos] != 61:
+                pos += 1
+            if pos >= len(data):
+                return False, output # If pos is greater than or equal to the length of data, return 
+            field.name = data[start:pos].decode()
+            pos += 1
             if field.name in ["DATA", "CERT"]:
-                if num + 2 >= len(data):
-                    return False, output
-                num3 = (data[num] << 8) + data[num + 1]
-                num2 = num
-                if num + num3 > len(data):
-                    return False, output
-                num += num3
-                if data[num] != 13 or data[num + 1] != 10:
-                    return False, output
-                num += 2
-                field.bin_data_size = num3
-                field.bin_data = data[num2:num2+num3]
+                if pos + 2 >= len(data):
+                    return False, output # If the length of data is less than the current position plus 2, return False and output
+                length = (data[pos] << 8) + data[pos + 1]
+                start = pos
+                if pos + length > len(data):
+                    return False, output # If the current position plus length is greater than the length of data, return False and output
+                pos += length
+                if data[pos] != 13 or data[pos + 1] != 10:
+                    return False, output # If the current position in data is not equal to 13 or the next position is not equal to 10, return False and output
+                pos += 2
+                field.bin_data_size = length
+                field.bin_data = data[start:start+length]
             elif field.name in ["PRIMARY_CHAIN", "SECONDARY_CHAIN", "CHAIN"]:
-                num2 = num
-                while data[num] != 13 or data[num + 1] != 10:
-                    num += 20
-                    if num >= len(data):
-                        return False, output
-                    if data[num] != 59:
-                        return False, output
-                    num += 1
-                    if num >= len(data):
+                start = pos
+                while data[pos] != 13 or data[pos + 1] != 10: # CRLF
+                    pos += 20 # 20 bytes per fingerprint
+                    if pos >= len(data):
+                        return False, output # If the current position is greater than or equal to the length of data, return False and output
+                    if data[pos] != 59: # ;
+                        return False, output  #If the current position in data is not equal to 59 (;), return False and output
+                    pos += 1
+                    if pos >= len(data):
                         break
-                if num >= len(data):
-                    return False, output
-                num3 = num - num2
-                num += 2
-                if num3 > 0:
-                    field.bin_data_size = num3
-                field.bin_data = data[num2:num2+num3]
+                if pos >= len(data):
+                    return False, output # If the current position is greater than or equal to the length of data, return False and output
+                length = pos - start
+                pos += 2
+                if length > 0:
+                    field.bin_data_size = length
+                field.bin_data = data[start:start+length]
             elif field.name == "FINGERPRINT":
-                num2 = num
-                num += 20
-                if num >= len(data):
-                    return False, output
-                if data[num] != 13 or data[num + 1] != 10:
-                    return False, output
-                num3 = num - num2
-                num += 2
-                field.bin_data_size = num3
-                field.bin_data = data[num2:num2+num3]
+                start = pos
+                pos += 20 # 20 bytes per fingerprint
+                if pos >= len(data):
+                    return False, output # If the current position is greater than or equal to the length of data, return False and output
+                if data[pos] != 13 or data[pos + 1] != 10: # CRLF
+                    return False, output # If the current position in data is not equal to CRLF, return False and output
+                length = pos - start
+                pos += 2
+                field.bin_data_size = length
+                field.bin_data = data[start:start+length]
             else:
-                num2 = num
-                while num < len(data) - 1 and (data[num] != 13 or data[num + 1] != 10):
-                    num += 1
-                if num >= len(data):
-                    return False, output
-                num3 = num - num2
-                num += 2
-                field.bin_data_size = num3
-                field.bin_data = data[num2:num2+num3]
+                start = pos
+                while pos < len(data) - 1 and (data[pos] != 13 or data[pos + 1] != 10): # CRLF
+                    pos += 1
+                if pos >= len(data):
+                    return False, output # If the current position is greater than or equal to the length of data, return False and output
+                length = pos - start
+                pos += 2
+                field.bin_data_size = length
+                field.bin_data = data[start:start+length]
             iPPProcessor.fields.append(field)
         return True, iPPProcessor
 
