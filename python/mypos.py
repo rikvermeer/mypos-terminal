@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Tuple
 from enum import Enum
+import uuid
 
 
 class BeepTone(Enum):
@@ -216,12 +217,50 @@ class Field:
         self.str_data = ""
         self.bin_data_size = 0
         self.bin_data = b""
-
+    
+    @classmethod
+    def FromString(cls, name, data):
+        field = cls()
+        field.name = name
+        field.str_data = data
+        return field
 
 
 class IPPProcessor:
     def __init__(self):
         self.fields = []
+
+    def IsValid(self):
+        result = 0
+        field = self.Get("PROTOCOL")
+        if field is None or field.str_data != "IPP":
+            return False
+        field = self.Get("METHOD")
+        if field is None or field.str_data == "":
+            return False
+        field = self.Get("SID")
+        if field is None or field.str_data == "":
+            return False
+        field = self.Get("VERSION")
+        if field is None:
+            return False
+        try:
+            result = int(field.str_data)
+        except ValueError:
+            return False
+        if result < 200:
+            return False
+        return True
+
+    def CreateResult(self, status):
+        result = IPPProcessor()
+        result.Add(self.Get("PROTOCOL"))
+        result.Add(self.Get("VERSION"))
+        result.Add(self.Get("METHOD"))
+        result.Add(self.Get("SID"))
+        result.Add("STATUS", str(status))
+        result.Add(self.Get("STAGE"))
+        return result
 
     def GetDataForSending(self):
         list = []
@@ -249,6 +288,17 @@ class IPPProcessor:
         list[0] = len(list) // 256
         list[1] = len(list) % 256
         return bytes(list)
+
+    @classmethod
+    def CreateRequest(cls, method: str) -> IPPProcessor:
+        iPPProcessor = IPPProcessor()
+        iPPProcessor.fields = [
+            Field.FromString("PROTOCOL", "IPP"),
+            Field.FromString("VERSION", "200"),
+            Field.FromString("METHOD", method),
+            Field.FromString("SID", uuid.uuid4().hex),
+        ]
+        return iPPProcessor
 
     @classmethod
     def TryParse(cls, data: bytes) -> Tuple[bool, IPPProcessor]:
