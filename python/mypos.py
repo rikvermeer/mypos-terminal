@@ -1,3 +1,5 @@
+from __future__ import annotations
+from typing import Tuple
 from enum import Enum
 
 
@@ -169,6 +171,8 @@ class ProcessingResult:
         self.Status = TransactionStatus.TransactionNotFound
         self.TranData = TransactionData()
 
+
+
 class TransactionData:
     def __init__(self):
         self.Type = ""
@@ -214,9 +218,110 @@ class Field:
         self.bin_data = b""
 
 
+
 class IPPProcessor:
     def __init__(self):
         self.fields = []
+
+    def GetDataForSending(self):
+        list = []
+        list.append(0)
+        list.append(0)
+        for i in range(len(self.fields)):
+            if self.fields[i] != None:
+                if self.fields[i].name in ["PRIMARY_CHAIN", "SECONDARY_CHAIN", "FINGERPRINT", "CHAIN", "PRINT_DATA"]:
+                    list += list(self.fields[i].name.encode('ascii'))
+                    list.append(61)
+                    list += self.fields[i].bin_data
+                    list += [13, 10]
+                elif self.fields[i].name == "DATA":
+                    list += list(self.fields[i].name.encode('ascii'))
+                    list.append(61)
+                    list.append(self.fields[i].bin_data_size // 256)
+                    list.append(self.fields[i].bin_data_size % 256)
+                    list += self.fields[i].bin_data
+                    list += [13, 10]
+                else:
+                    list += list(self.fields[i].name.encode('ascii'))
+                    list.append(61)
+                    list += list(self.fields[i].str_data.encode('ascii'))
+                    list += [13, 10]
+        list[0] = len(list) // 256
+        list[1] = len(list) % 256
+        return bytes(list)
+
+    @classmethod
+    def TryParse(cls, data: bytes) -> Tuple[bool, IPPProcessor]:
+        output = None
+        iPPProcessor = IPPProcessor()
+        num = 0
+        num2 = 0
+        num3 = 0
+        while num < len(data):
+            field = Field()
+            num2 = num
+            num += 1
+            while num < len(data) and data[num] != 61:
+                num += 1
+            if num >= len(data):
+                return False, output
+            field.name = data[num2:num].decode()
+            num += 1
+            if field.name in ["DATA", "CERT"]:
+                if num + 2 >= len(data):
+                    return False, output
+                num3 = (data[num] << 8) + data[num + 1]
+                num2 = num
+                if num + num3 > len(data):
+                    return False, output
+                num += num3
+                if data[num] != 13 or data[num + 1] != 10:
+                    return False, output
+                num += 2
+                field.bin_data_size = num3
+                field.bin_data = data[num2:num2+num3]
+            elif field.name in ["PRIMARY_CHAIN", "SECONDARY_CHAIN", "CHAIN"]:
+                num2 = num
+                while data[num] != 13 or data[num + 1] != 10:
+                    num += 20
+                    if num >= len(data):
+                        return False, output
+                    if data[num] != 59:
+                        return False, output
+                    num += 1
+                    if num >= len(data):
+                        break
+                if num >= len(data):
+                    return False, output
+                num3 = num - num2
+                num += 2
+                if num3 > 0:
+                    field.bin_data_size = num3
+                field.bin_data = data[num2:num2+num3]
+            elif field.name == "FINGERPRINT":
+                num2 = num
+                num += 20
+                if num >= len(data):
+                    return False, output
+                if data[num] != 13 or data[num + 1] != 10:
+                    return False, output
+                num3 = num - num2
+                num += 2
+                field.bin_data_size = num3
+                field.bin_data = data[num2:num2+num3]
+            else:
+                num2 = num
+                while num < len(data) - 1 and (data[num] != 13 or data[num + 1] != 10):
+                    num += 1
+                if num >= len(data):
+                    return False, output
+                num3 = num - num2
+                num += 2
+                field.bin_data_size = num3
+                field.bin_data = data[num2:num2+num3]
+            iPPProcessor.fields.append(field)
+        return True, iPPProcessor
+
 
     def get(self, name):
         for field in self.fields:
@@ -224,5 +329,20 @@ class IPPProcessor:
                 return field
         field = Field()
         field.name = name
-        fields.append(Field())
+        self.fields.append(Field())
         return None
+
+    def add(self, name, param):
+        field = Field()
+        field.name = name
+        if type(param) == str:
+            field.str_data = param
+        else:
+            field.bin_data = param
+            field.bin_data_size = len(param)
+        self.fields.append(field)
+
+    def addField(self, field):
+        self.fields.append(field)
+
+
